@@ -196,6 +196,7 @@ def is_latin(text):
                 or unicodedata.category(x).startswith("P")
                 or unicodedata.category(x).startswith("N")
                 or unicodedata.category(x).startswith("Z")
+                or unicodedata.name(x) in ["HYPHEN-MINUS", "LOW LINE"]
             )
             for x in text
         ]

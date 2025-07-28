@@ -1,12 +1,8 @@
 pytest-docker==0.10.1
-requests==2.26.0
+requests==2.25.1
 requests-mock==1.8.0
 Django==4.0
 beautifulsoup4==4.10.0
 bleach==4.1.0
 more_itertools
 python-dateutil==2.8.2
-ordered-set==4.1.0
-PyYAML==5.3.1
-docker-compose==1.29.1
-
