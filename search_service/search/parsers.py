@@ -189,6 +189,9 @@ def is_latin(text):
     Can be used to test whether a search phrase is suitable for parsing as a fulltext query, or whether it
     should be treated as an "icontains" or similarly language independent query filter.
     """
+    if not text:
+        return False
+        
     return all(
         [
             (
