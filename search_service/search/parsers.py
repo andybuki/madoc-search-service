@@ -208,14 +208,34 @@ def looks_like_id(text):
     Function to evaluate whether a piece of text looks like an identifier that should be searched exactly.
     
     This includes patterns like:
-    - KCDC_A-005, KCDC_B-005 (hyphenated IDs with single letters that might be stop words)
+    - KCDC_A-005, KCDC_B-005 (full hyphenated IDs)
+    - KCDC_A, KCDC_B (partial IDs with potential stop words)
+    - A-005, B-005 (partial IDs starting with potential stop words)
     - Similar patterns with underscores and hyphens
     """
     if not text:
         return False
     
-    # Pattern for identifiers like KCDC_A-005 where the single letter might be a stop word
-    return bool(re.match(r'^[A-Z]+_[A-Z]-\d+$', text.strip(), re.IGNORECASE))
+    text = text.strip()
+    
+    # Full pattern: KCDC_A-005
+    if re.match(r'^[A-Z]+_[A-Z]-\d+$', text, re.IGNORECASE):
+        return True
+    
+    # Partial pattern ending with single letter: KCDC_A
+    if re.match(r'^[A-Z]+_[A-Z]$', text, re.IGNORECASE):
+        return True
+    
+    # Partial pattern starting with single letter and hyphen: A-005, B-005
+    if re.match(r'^[A-Z]-\d+$', text, re.IGNORECASE):
+        return True
+    
+    # Pattern for codes that might contain stop words: KCDC_A, ABCD_A, etc.
+    # This catches cases where the search contains underscores followed by single letters
+    if re.match(r'^[A-Z]+_[A-Z]+$', text, re.IGNORECASE) and len(text.split('_')[-1]) == 1:
+        return True
+    
+    return False
 
 
 class IIIFSearchParser(JSONParser):

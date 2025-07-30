@@ -2,7 +2,11 @@
 
 ## Problem Summary
 
-The madoc-search-service was failing to find IIIF manifests with IDs containing the pattern `KCDC_A-005`, while successfully finding `KCDC_B-005` and `KCDC_C-005`. This issue was caused by PostgreSQL's full-text search treating the single letter "A" as a stop word and filtering it out during tokenization of hyphenated words.
+The madoc-search-service was failing to find IIIF manifests with ID patterns containing the letter "A":
+- **Full IDs**: `KCDC_A-005` (failed) vs `KCDC_B-005` (worked)
+- **Partial searches**: `KCDC_A`, `A-005` (failed) vs `KCDC_B`, `B-005` (worked)
+
+This issue was caused by PostgreSQL's full-text search treating the single letter "A" as a stop word and filtering it out during tokenization of hyphenated words and partial searches.
 
 ## Root Cause
 
@@ -14,17 +18,38 @@ When searching relied on individual word parts, the missing "a" token caused sea
 
 ## Implemented Solution
 
-### Quick Fix: Pattern-Based Search Strategy
+### Enhanced Fix: Comprehensive Pattern-Based Search Strategy
 
-Modified `search_service/search/parsers.py` to detect ID-like patterns and handle them with exact matching instead of full-text search.
+Modified `search_service/search/parsers.py` to detect various ID-like patterns (both full and partial) and handle them with exact matching instead of full-text search.
 
 #### Changes Made:
 
-1. **Added pattern detection function** (`looks_like_id`):
+1. **Added comprehensive pattern detection function** (`looks_like_id`):
    ```python
    def looks_like_id(text):
-       """Detect ID patterns like KCDC_A-005 that might have stop word issues"""
-       return bool(re.match(r'^[A-Z]+_[A-Z]-\d+$', text.strip(), re.IGNORECASE))
+       """Detect ID patterns that might have stop word issues"""
+       if not text:
+           return False
+       
+       text = text.strip()
+       
+       # Full pattern: KCDC_A-005
+       if re.match(r'^[A-Z]+_[A-Z]-\d+$', text, re.IGNORECASE):
+           return True
+       
+       # Partial pattern ending with single letter: KCDC_A
+       if re.match(r'^[A-Z]+_[A-Z]$', text, re.IGNORECASE):
+           return True
+       
+       # Partial pattern starting with single letter and hyphen: A-005, B-005
+       if re.match(r'^[A-Z]-\d+$', text, re.IGNORECASE):
+           return True
+       
+       # Pattern for codes that might contain stop words
+       if re.match(r'^[A-Z]+_[A-Z]+$', text, re.IGNORECASE) and len(text.split('_')[-1]) == 1:
+           return True
+       
+       return False
    ```
 
 2. **Modified search logic** to use `icontains` for ID patterns:
@@ -43,21 +68,23 @@ Modified `search_service/search/parsers.py` to detect ID-like patterns and handl
   - Modified search string processing logic
 
 #### Files Created:
-- `test_search_fix.py` - Test script to validate the fix
+- `test_enhanced_fix.py` - Enhanced test script to validate the comprehensive fix
 - `SEARCH_BUG_ANALYSIS.md` - Detailed problem analysis
 - `search_service/search/management/commands/setup_custom_search_config.py` - Management command for advanced fix
 
 ## Testing
 
-Run the test script to validate the fix:
+Run the enhanced test script to validate the comprehensive fix:
 ```bash
-python3 test_search_fix.py
+python3 test_enhanced_fix.py
 ```
 
-Expected results after fix:
-- ✅ `KCDC_A-005` should now return results
-- ✅ `KCDC_B-005` should continue to work
-- ✅ `KCDC_C-005` should continue to work  
+Expected results after enhanced fix:
+- ✅ `KCDC_A-005` should now return results (original issue)
+- ✅ `KCDC_A` should now return results (partial search)
+- ✅ `A-005` should now return results (partial search)
+- ✅ `KCDC_B`, `B-005` should now work consistently (partial searches)
+- ✅ `KCDC_B-005`, `KCDC_C-005` should continue to work  
 - ✅ Regular text searches should work normally
 
 ## Alternative Solutions
@@ -75,14 +102,17 @@ This creates a `madoc_search` configuration that doesn't filter hyphenated word 
 ## Impact Assessment
 
 ### Positive Impacts:
-- ✅ Fixes the specific search issue with `KCDC_A-005` patterns
+- ✅ Fixes the complete range of search issues with stop word patterns
+- ✅ Handles both full IDs (`KCDC_A-005`) and partial searches (`KCDC_A`, `A-005`)
 - ✅ Maintains existing functionality for regular text searches
-- ✅ Minimal performance impact (pattern check is very fast)
+- ✅ Minimal performance impact (pattern checks are very fast)
 - ✅ No database schema changes required
+- ✅ Comprehensive coverage of related ID formats
 
 ### Considerations:
 - 🔍 ID pattern matching uses `icontains` instead of full-text search (slightly different semantics)
-- 🔍 Pattern is currently specific to `WORD_LETTER-NUMBER` format (can be extended if needed)
+- 🔍 Expanded pattern detection is more permissive but targeted to avoid false positives
+- 🔍 Covers multiple ID formats to prevent similar issues with other patterns
 
 ## Future Enhancements
 
@@ -93,11 +123,14 @@ This creates a `madoc_search` configuration that doesn't filter hyphenated word 
 
 ## Verification Steps
 
-1. Deploy the fix to your environment
-2. Test searching for `KCDC_A-005` - should return results
-3. Test searching for `KCDC_B-005` and `KCDC_C-005` - should continue working
-4. Test regular text searches - should work normally
-5. Monitor search performance and accuracy
+1. Deploy the enhanced fix to your environment
+2. Test searching for `KCDC_A-005` - should return results (original issue)
+3. Test searching for `KCDC_A` - should now return results (new fix)
+4. Test searching for `A-005` - should now return results (new fix)
+5. Test searching for `KCDC_B`, `B-005` - should work consistently
+6. Test searching for `KCDC_B-005` and `KCDC_C-005` - should continue working
+7. Test regular text searches - should work normally
+8. Monitor search performance and accuracy
 
 ## Rollback Plan
 
