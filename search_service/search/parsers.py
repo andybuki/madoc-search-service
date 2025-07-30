@@ -1,5 +1,6 @@
 import codecs
 import json
+import re
 from functools import reduce
 from operator import or_, and_
 import pytz
@@ -202,6 +203,21 @@ def is_latin(text):
     )
 
 
+def looks_like_id(text):
+    """
+    Function to evaluate whether a piece of text looks like an identifier that should be searched exactly.
+    
+    This includes patterns like:
+    - KCDC_A-005, KCDC_B-005 (hyphenated IDs with single letters that might be stop words)
+    - Similar patterns with underscores and hyphens
+    """
+    if not text:
+        return False
+    
+    # Pattern for identifiers like KCDC_A-005 where the single letter might be a stop word
+    return bool(re.match(r'^[A-Z]+_[A-Z]-\d+$', text.strip(), re.IGNORECASE))
+
+
 class IIIFSearchParser(JSONParser):
     def parse(self, stream, media_type=None, parser_context=None):
         logger.debug("IIIF Search Parser being invoked")
@@ -253,7 +269,13 @@ class IIIFSearchParser(JSONParser):
             if iiif_identifiers:
                 prefilter_kwargs.append(Q(**{f"id__in": iiif_identifiers}))
             if search_string:
-                if (non_latin_fulltext or is_latin(search_string)) and not search_multiple_fields:
+                # Special handling for ID-like patterns that might have stop words in hyphenated parts
+                if looks_like_id(search_string):
+                    # For ID-like strings, use exact matching to avoid stop word filtering issues
+                    postfilter_q.append(
+                        Q(indexables__indexable__icontains=search_string)
+                    )
+                elif (non_latin_fulltext or is_latin(search_string)) and not search_multiple_fields:
                     # Search string is good candidate for fulltext query and we are not searching across multiple fields
                     if language:
                         filter_kwargs["indexables__search_vector"] = SearchQuery(
