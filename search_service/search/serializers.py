@@ -16,6 +16,7 @@ from datetime import datetime
 from .serializer_utils import calc_offsets, flatten_iiif_descriptive
 from .langbase import LANGBASE
 from django.utils.translation import get_language
+from .parsers import decode_search_string
 
 
 default_lang = get_language()
@@ -298,6 +299,11 @@ class IIIFSearchSummarySerializer(serializers.HyperlinkedModelSerializer):
             else:
                 # Otherwise, this is probably a simple GET request, so we construct the queries from params
                 search_string = self.context["request"].query_params.get("fulltext", None)
+                
+                # Decode the search string to handle URL-encoded characters (especially # as %23)
+                if search_string:
+                    search_string = decode_search_string(search_string)
+                
                 language = self.context["request"].query_params.get("search_language", None)
                 search_type = self.context["request"].query_params.get("search_type", "websearch")
                 if search_string:
