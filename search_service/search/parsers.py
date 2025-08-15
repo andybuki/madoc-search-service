@@ -7,6 +7,7 @@ import pytz
 from dateutil import parser
 import logging
 import unicodedata
+import urllib.parse
 
 
 # Django imports
@@ -211,7 +212,8 @@ def looks_like_id(text):
     - KCDC_A-005, KCDC_B-005 (full hyphenated IDs)
     - KCDC_A, KCDC_B (partial IDs with potential stop words)
     - A-005, B-005 (partial IDs starting with potential stop words)
-    - Similar patterns with underscores and hyphens
+    - 012 1-1/#/10/9/4 (IDs with hash separators and path-like structures)
+    - Similar patterns with underscores, hyphens, and hash symbols
     """
     if not text:
         return False
@@ -235,7 +237,53 @@ def looks_like_id(text):
     if re.match(r'^[A-Z]+_[A-Z]+$', text, re.IGNORECASE) and len(text.split('_')[-1]) == 1:
         return True
     
+    # Pattern for path-like IDs with hash separators: "012 1-1/#/10/9/4"
+    # This matches patterns like: digits/letters followed by optional spaces, hyphens, 
+    # hash symbols, slashes, and more digits/letters
+    if re.match(r'^[\w\s\-]+[#/][\w\s\-/]+$', text):
+        return True
+    
+    # Pattern for IDs containing hash symbols in general: "ID#123", "ABC#DEF", etc.
+    if '#' in text and re.match(r'^[\w\s\-#/]+$', text):
+        return True
+    
     return False
+
+
+def decode_search_string(search_string):
+    """
+    Properly decode a search string that may contain URL-encoded characters.
+    
+    This is particularly important for handling '#' characters which are often 
+    URL-encoded as '%23' to prevent them being treated as URL fragments.
+    
+    Args:
+        search_string (str): The raw search string from the request
+        
+    Returns:
+        str: The properly decoded search string
+        
+    Examples:
+        - "012 1-1/%23/10/9/4" → "012 1-1/#/10/9/4"
+        - "test%20string" → "test string"
+        - "normal string" → "normal string" (unchanged)
+    """
+    if not search_string:
+        return search_string
+    
+    try:
+        # URL decode the string to handle encoded characters like %23 (for #)
+        decoded = urllib.parse.unquote(search_string)
+        
+        # Log if decoding actually changed something (indicating URL encoding was present)
+        if decoded != search_string:
+            logger.debug(f"URL decoded search string: '{search_string}' → '{decoded}'")
+        
+        return decoded
+    except Exception as e:
+        # If URL decoding fails for any reason, return the original string
+        logger.warning(f"Failed to URL decode search string '{search_string}': {e}")
+        return search_string
 
 
 def should_use_hybrid_search(text):
@@ -292,6 +340,17 @@ class IIIFSearchParser(JSONParser):
             postfilter_q = []
             filter_kwargs = {}
             search_string = request_data.get("fulltext", None)
+            
+            # Decode the search string to handle URL-encoded characters (especially # as %23)
+            if search_string:
+                original_search_string = search_string
+                search_string = decode_search_string(search_string)
+                
+                # Debug logging to track search string processing
+                logger.debug(f"Original search string received: '{original_search_string}' (length: {len(original_search_string)})")
+                if search_string != original_search_string:
+                    logger.debug(f"After URL decoding: '{search_string}' (length: {len(search_string)})")
+                logger.debug(f"Final search string contains '#': {'#' in search_string}")
             date_start = request_data.get("date_start", None)
             date_end = request_data.get("date_end", None)
             date_exact = request_data.get("date_exact", None)
