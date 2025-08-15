@@ -238,6 +238,48 @@ def looks_like_id(text):
     return False
 
 
+def should_use_hybrid_search(text):
+    """
+    Function to determine if a search pattern might benefit from hybrid search approach.
+    
+    This handles cases where full-text search might fail due to:
+    - Uncommon words that might not be properly tokenized
+    - Multi-word patterns that contain both common and uncommon terms
+    - Patterns with mixed content types (words + numbers + symbols)
+    
+    Examples that benefit from hybrid search:
+    - "Kundeling archives" (uncommon word + common word)
+    - "Kundeling archives ID 108" (uncommon word + common words + numbers)
+    - Multi-word searches containing proper nouns or technical terms
+    """
+    if not text or len(text.strip()) == 0:
+        return False
+    
+    text = text.strip()
+    words = text.split()
+    
+    # If it's a single word, let full-text search handle it
+    if len(words) <= 1:
+        return False
+    
+    # If it looks like an ID pattern, don't use hybrid (handled by looks_like_id)
+    if looks_like_id(text):
+        return False
+    
+    # Use hybrid search for multi-word patterns that might contain:
+    # 1. Proper nouns (capitalized words that might not be in dictionaries)
+    # 2. Mixed content (words + numbers)
+    # 3. Complex patterns with symbols
+    
+    has_proper_nouns = any(word[0].isupper() and word[1:].islower() for word in words if len(word) > 1)
+    has_numbers = any(re.search(r'\d', word) for word in words)
+    has_symbols = any(re.search(r'[^\w\s]', word) for word in words)
+    has_long_words = any(len(word) > 8 for word in words)  # Potentially uncommon words
+    
+    # Use hybrid search if pattern has characteristics that might cause full-text search issues
+    return has_proper_nouns or (has_numbers and len(words) > 2) or has_symbols or has_long_words
+
+
 class IIIFSearchParser(JSONParser):
     def parse(self, stream, media_type=None, parser_context=None):
         logger.debug("IIIF Search Parser being invoked")
@@ -295,6 +337,46 @@ class IIIFSearchParser(JSONParser):
                     postfilter_q.append(
                         Q(indexables__indexable__icontains=search_string)
                     )
+                elif should_use_hybrid_search(search_string):
+                    # For patterns that might fail with full-text search, use hybrid approach:
+                    # Try both full-text search AND word-by-word search to ensure results
+                    search_queries = []
+                    
+                    # Add full-text search as primary method
+                    if language:
+                        search_queries.append(
+                            Q(indexables__search_vector=SearchQuery(
+                                search_string, config=language, search_type=search_type
+                            ))
+                        )
+                    else:
+                        search_queries.append(
+                            Q(indexables__search_vector=SearchQuery(
+                                search_string, search_type=search_type
+                            ))
+                        )
+                    
+                    # Add word-by-word search as fallback
+                    word_queries = []
+                    for word in search_string.split():
+                        if len(word.strip()) > 0:  # Skip empty words
+                            word_queries.append(
+                                Q(indexables__indexable__icontains=word.strip())
+                            )
+                    
+                    if word_queries:
+                        # All words must be found (AND logic)
+                        combined_word_query = word_queries[0]
+                        for word_query in word_queries[1:]:
+                            combined_word_query &= word_query
+                        search_queries.append(combined_word_query)
+                    
+                    # Use OR logic: results from either full-text OR word-by-word search
+                    if search_queries:
+                        final_query = search_queries[0]
+                        for query in search_queries[1:]:
+                            final_query |= query
+                        postfilter_q.append(final_query)
                 elif (non_latin_fulltext or is_latin(search_string)) and not search_multiple_fields:
                     # Search string is good candidate for fulltext query and we are not searching across multiple fields
                     if language:
