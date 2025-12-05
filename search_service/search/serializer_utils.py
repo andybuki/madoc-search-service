@@ -241,10 +241,37 @@ def process_field(
         else:
             indexable_values = []
             label_values = field_instance.get("label", {})
+
+            # Determine canonical subtype from labels BEFORE processing values
+            # This ensures consistent subtype across all languages
+            # Priority: English label > default language label > any available label > key
+            canonical_subtype = None
+            if label_values:
+                # Try English first
+                if "en" in label_values and label_values["en"]:
+                    canonical_subtype = label_values["en"][0]
+                # Then try default language
+                elif default_language in label_values and label_values[default_language]:
+                    canonical_subtype = label_values[default_language][0]
+                # Then try any available label
+                else:
+                    for label_lang, label_list in label_values.items():
+                        if label_list and label_lang not in ["@none", "none"]:
+                            canonical_subtype = label_list[0]
+                            break
+                    # Finally try @none or none
+                    if not canonical_subtype:
+                        for label_lang in ["@none", "none"]:
+                            if label_lang in label_values and label_values[label_lang]:
+                                canonical_subtype = label_values[label_lang][0]
+                                break
+
+            # Use canonical subtype if found, otherwise fall back to key
+            if canonical_subtype:
+                subtype = canonical_subtype
+
             if field_values:=field_instance.get("value"):
                 for lang, vals in field_values.items():
-                    if labels:= label_values.get(lang):
-                        subtype = labels[0]
                     if lang in ["@none", "none"]:
                         lang = default_language
                     language_data = get_language_data(lang_code=lang, langbase=lang_base)

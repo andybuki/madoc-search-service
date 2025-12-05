@@ -285,7 +285,9 @@ class IIIFSearch(SearchBaseClass):
         ]
         if facet_fields := request.data.get("facet_fields"):
             facet_filter_args.append(models.Q(indexables__subtype__in=facet_fields))
-        if facet_languages := request.data.get("facet_languages"):
+
+        facet_languages = request.data.get("facet_languages")
+        if facet_languages:
             facet_language_codes = set(map(lambda x: x.split("-")[0], facet_languages))
             iso639_1_codes = list(filter(lambda x: len(x) == 2, facet_language_codes))
             iso639_2_codes = list(filter(lambda x: len(x) == 3, facet_language_codes))
@@ -299,25 +301,61 @@ class IIIFSearch(SearchBaseClass):
             if iso639_2_codes:
                 facet_language_filter |= models.Q(indexables__language_iso639_2__in=iso639_2_codes)
             facet_filter_args.append(facet_language_filter)
-        facet_summary = (
-            facetable_q.filter(*facet_filter_args)
-            .values("indexables__type", "indexables__subtype", "indexables__indexable")
-            .annotate(n=models.Count("pk", distinct=True))
-            .order_by("indexables__type", "indexables__subtype", "-n", "indexables__indexable")
-        )
-        grouped_facets = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-        truncate_to = request.data.get("num_facets", 10)
-        truncated_facets = defaultdict(lambda: defaultdict(dict))
-        # Turn annotated list of results into a deeply nested dict
-        for facet in facet_summary:
-            grouped_facets[facet["indexables__type"]][facet["indexables__subtype"]][
-                facet["indexables__indexable"]
-            ] = facet["n"]
-        # Take the deeply nested dict and truncate the leaves of the tree to just N keys.
-        for facet_type, facet_subtypes in grouped_facets.items():
-            for k, v in facet_subtypes.items():
-                truncated_facets[facet_type][k] = dict(itertools.islice(v.items(), truncate_to))
-        return truncated_facets
+            logger.debug(f"Filtering facets by languages: {facet_languages} (codes: {iso639_1_codes + iso639_2_codes})")
+
+        # Check if we should include language info in facets (for debugging/advanced use)
+        include_language = request.data.get("facet_include_language", False)
+
+        if include_language:
+            # Include language information in facet results
+            facet_summary = (
+                facetable_q.filter(*facet_filter_args)
+                .values(
+                    "indexables__type",
+                    "indexables__subtype",
+                    "indexables__indexable",
+                    "indexables__language_iso639_1",
+                )
+                .annotate(n=models.Count("pk", distinct=True))
+                .order_by("indexables__type", "indexables__subtype", "-n", "indexables__indexable")
+            )
+            grouped_facets = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+            truncate_to = request.data.get("num_facets", 10)
+            truncated_facets = defaultdict(lambda: defaultdict(dict))
+            # Turn annotated list of results into a deeply nested dict with language info
+            for facet in facet_summary:
+                lang = facet["indexables__language_iso639_1"] or "none"
+                value = facet["indexables__indexable"]
+                grouped_facets[facet["indexables__type"]][facet["indexables__subtype"]][value] = {
+                    "count": facet["n"],
+                    "language": lang,
+                }
+            # Take the deeply nested dict and truncate the leaves of the tree to just N keys.
+            for facet_type, facet_subtypes in grouped_facets.items():
+                for k, v in facet_subtypes.items():
+                    truncated_facets[facet_type][k] = dict(itertools.islice(v.items(), truncate_to))
+            return truncated_facets
+        else:
+            # Standard facet format (backward compatible)
+            facet_summary = (
+                facetable_q.filter(*facet_filter_args)
+                .values("indexables__type", "indexables__subtype", "indexables__indexable")
+                .annotate(n=models.Count("pk", distinct=True))
+                .order_by("indexables__type", "indexables__subtype", "-n", "indexables__indexable")
+            )
+            grouped_facets = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+            truncate_to = request.data.get("num_facets", 10)
+            truncated_facets = defaultdict(lambda: defaultdict(dict))
+            # Turn annotated list of results into a deeply nested dict
+            for facet in facet_summary:
+                grouped_facets[facet["indexables__type"]][facet["indexables__subtype"]][
+                    facet["indexables__indexable"]
+                ] = facet["n"]
+            # Take the deeply nested dict and truncate the leaves of the tree to just N keys.
+            for facet_type, facet_subtypes in grouped_facets.items():
+                for k, v in facet_subtypes.items():
+                    truncated_facets[facet_type][k] = dict(itertools.islice(v.items(), truncate_to))
+            return truncated_facets
 
     def list(self, request, *args, **kwargs):
         resp = super().list(request, *args, **kwargs)
